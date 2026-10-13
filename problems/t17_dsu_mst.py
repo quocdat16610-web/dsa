@@ -402,6 +402,7 @@ class ParityDSU:
 def _g(r, s):
     n, m = S(s, 2, 10**5), S(s, 1, 2 * 10**5)
     side = [r.randint(0, 1) for _ in range(n + 1)]
+    side[1], side[2] = 0, 1  # đảm bảo có cả hai phía
     es = []
     bad_at = r.randint(1, m) if r.random() < .7 else m + 1
     for i in range(1, m + 1):
