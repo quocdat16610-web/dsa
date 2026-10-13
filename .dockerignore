@@ -1,0 +1,4 @@
+data/
+judge/bin/
+__pycache__/
+.git/
