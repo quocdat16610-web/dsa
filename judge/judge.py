@@ -50,6 +50,39 @@ def _limits(cpu_sec, mem_mb):
     return f
 
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_RUNNER = os.path.join(_HERE, "bin", "runner")
+_runner_lock = threading.Lock()
+_runner_ok = None
+
+
+def runner_path():
+    """Biên dịch judge/runner.c (một lần). Trả về đường dẫn, hoặc None nếu không có trình biên dịch C."""
+    global _runner_ok
+    with _runner_lock:
+        if _runner_ok is None:
+            src = os.path.join(_HERE, "runner.c")
+            try:
+                if not os.path.exists(_RUNNER) or os.path.getmtime(_RUNNER) < os.path.getmtime(src):
+                    os.makedirs(os.path.dirname(_RUNNER), exist_ok=True)
+                    cc = shutil.which("gcc") or shutil.which("cc") or shutil.which("g++")
+                    if not cc:
+                        raise OSError("không có trình biên dịch C")
+                    subprocess.run([cc, "-O2", "-o", _RUNNER, src], check=True, capture_output=True, timeout=60)
+                _runner_ok = True
+            except (OSError, subprocess.SubprocessError):
+                _runner_ok = False
+        return _RUNNER if _runner_ok else None
+
+
+def _run_via_runner(runner, cmd, cwd, in_path, out_path, err_path, tl_ms, mem_mb):
+    wall = int(tl_ms * 2.5 + 500)
+    p = subprocess.run([runner, str(tl_ms), str(mem_mb), str(wall), in_path, out_path, err_path, *cmd],
+                       cwd=cwd, capture_output=True, text=True, timeout=wall / 1000 + 10)
+    code, sig, cpu_ms, mem_kb, killed = map(int, p.stdout.split())
+    return code, sig, cpu_ms, mem_kb, bool(killed)
+
+
 def run_one(cmd, cwd, inp, tl_ms, ml_mb, extra_mem_mb=0):
     """Chạy chương trình với input `inp`. Trả về dict: status, time(ms), mem(KB), out, err."""
     in_path = os.path.join(cwd, "input.txt")
@@ -57,6 +90,13 @@ def run_one(cmd, cwd, inp, tl_ms, ml_mb, extra_mem_mb=0):
     err_path = os.path.join(cwd, "stderr.txt")
     with open(in_path, "w") as f:
         f.write(inp)
+    runner = runner_path()
+    if runner:
+        code, sig, cpu_ms, mem_kb, killed = _run_via_runner(runner, cmd, cwd, in_path, out_path, err_path,
+                                                            tl_ms, ml_mb + extra_mem_mb)
+        if code == 127 or code == 126:
+            sig = 0
+        return _classify(code, sig, cpu_ms, mem_kb, killed, out_path, err_path, tl_ms, ml_mb)
     cpu_sec = int(tl_ms / 1000) + 1
     with open(in_path) as fi, open(out_path, "w") as fo, open(err_path, "w") as fe:
         start = time.monotonic()
@@ -79,15 +119,19 @@ def run_one(cmd, cwd, inp, tl_ms, ml_mb, extra_mem_mb=0):
             time.sleep(0.002)
         proc.returncode = 0  # đã wait4 thủ công, tránh Popen wait lại
     cpu_ms = int((ru.ru_utime + ru.ru_stime) * 1000)
-    mem_kb = ru.ru_maxrss
+    sig = os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0
+    code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -1
+    return _classify(code, sig, cpu_ms, ru.ru_maxrss, killed, out_path, err_path, tl_ms, ml_mb)
+
+
+def _classify(code, sig, cpu_ms, mem_kb, killed, out_path, err_path, tl_ms, ml_mb):
     with open(out_path, errors="replace") as f:
         out = f.read()
     with open(err_path, errors="replace") as f:
         err = f.read(4000)
-
+    if sig:
+        code = -sig
     res = {"time": cpu_ms, "mem": mem_kb, "out": out, "err": err}
-    sig = os.WTERMSIG(status) if os.WIFSIGNALED(status) else 0
-    code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -sig
     if killed or sig == signal.SIGXCPU or cpu_ms > tl_ms:
         res["status"] = "TLE"
         res["time"] = max(cpu_ms, tl_ms)
