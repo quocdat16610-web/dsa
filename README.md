@@ -46,8 +46,8 @@ từ cơ bản đến nâng cao:
 
 Trang web: **https://quocdat16610-web.github.io/dsa/** (sau khi bật Pages — xem bước 1).
 
-1. Một lần duy nhất: vào **Settings → Pages → Build and deployment → Source: GitHub Actions**, rồi vào tab
-   **Actions** chạy lại workflow *Triển khai GitHub Pages* (hoặc push một commit bất kỳ).
+1. Workflow *Triển khai GitHub Pages* tự dựng trang và đẩy sang nhánh `gh-pages`. Nếu trang chưa hiện, vào
+   **Settings của repo → Pages → Source: Deploy from a branch → `gh-pages` / `(root)` → Save**.
 2. Workflow *Sinh bộ test* tự sinh sẵn bộ test của 20 chuyên đề và lưu vào cache (chạy lại mỗi 5 ngày).
 3. Khi học sinh bấm **Nộp bài** trên trang Pages, trang mở một issue `[DSA] Nộp ...` chứa code; workflow *Chấm bài*
    chạy trên máy chủ GitHub (Ubuntu, g++ / Python), chấm giống Codeforces, trả lời bằng bình luận và đóng issue.

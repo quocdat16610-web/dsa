@@ -1,36 +1,32 @@
-# Xuất bản trang web lên GitHub Pages (Settings → Pages → Source: "GitHub Actions").
+# Xuất bản trang web lên GitHub Pages: dựng web tĩnh rồi đẩy sang nhánh `gh-pages`.
+# GitHub Pages phục vụ nhánh này tại https://<owner>.github.io/<repo>/
+# (nếu Pages chưa tự bật: Settings → Pages → Source: Deploy from a branch → gh-pages / (root)).
 name: Triển khai GitHub Pages
 on:
   push:
     paths: ["static/**", "content/**", "problems/**", "curriculum.py", "tools/build_static.py", ".github/workflows/pages.yml"]
   workflow_dispatch:
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 concurrency:
   group: pages
   cancel-in-progress: true
 jobs:
-  build:
+  deploy:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python3 tools/build_static.py site "$GITHUB_REPOSITORY"
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Dựng web tĩnh
+        run: python3 tools/build_static.py site "$GITHUB_REPOSITORY"
+      - name: Đẩy sang nhánh gh-pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd site
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Triển khai trang web từ ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
