@@ -42,7 +42,24 @@ từ cơ bản đến nâng cao:
 - **Luyện thêm**: liên kết bài tương ứng trên CSES, Codeforces EDU, VNOJ.
 - Lưu tiến độ, lịch sử bài nộp theo tên học sinh; giáo viên xem bài nộp cả lớp và code từng bài.
 
-## Cài đặt và chạy
+## Dùng trên GitHub (GitHub Pages + GitHub Actions)
+
+Trang web: **https://quocdat16610-web.github.io/dsa/** (sau khi bật Pages — xem bước 1).
+
+1. Một lần duy nhất: vào **Settings → Pages → Build and deployment → Source: GitHub Actions**, rồi vào tab
+   **Actions** chạy lại workflow *Triển khai GitHub Pages* (hoặc push một commit bất kỳ).
+2. Workflow *Sinh bộ test* tự sinh sẵn bộ test của 20 chuyên đề và lưu vào cache (chạy lại mỗi 5 ngày).
+3. Khi học sinh bấm **Nộp bài** trên trang Pages, trang mở một issue `[DSA] Nộp ...` chứa code; workflow *Chấm bài*
+   chạy trên máy chủ GitHub (Ubuntu, g++ / Python), chấm giống Codeforces, trả lời bằng bình luận và đóng issue.
+   Trang web tự đọc kết quả và hiển thị (thường 30–90 giây).
+   - Cần tài khoản GitHub. Không có token: trang mở tab GitHub, bấm **Create** là xong.
+   - Có token (nút **🔑 GitHub**, fine-grained token chỉ cho repo này, quyền *Issues: Read and write*): nộp bằng một
+     cú bấm, không mở tab, không bị giới hạn 60 lượt đọc API/giờ.
+   - Giáo viên xem bài nộp cả lớp trong mục *Issues* của repo (nhãn `dsa-accepted` / `dsa-rejected`).
+4. Code học sinh chạy dưới một người dùng Linux hạn chế, job chấm không có quyền ghi vào repo; job trả lời
+   chỉ đọc file kết quả. Repo public thì GitHub Actions miễn phí.
+
+## Cài đặt và chạy trên máy
 
 Yêu cầu: **Python ≥ 3.8** (không cần cài thư viện) và **g++** (để chấm C++). Chạy trên Linux hoặc macOS.
 
@@ -76,6 +93,10 @@ problems/base.py       khung định nghĩa bài + tiện ích sinh test
 problems/tNN_*.py      ngân hàng bài của chuyên đề NN
 problems/__init__.py   nạp bài, cache bộ test
 judge/judge.py         trình chấm; judge/runner.c đo thời gian/bộ nhớ chính xác
+tools/build_static.py  xuất bản web tĩnh cho GitHub Pages
+tools/gh_judge.py      chấm bài từ issue trên GitHub Actions
+tools/build_tests.py   sinh sẵn bộ test (song song)
+.github/workflows/     pages.yml (triển khai Pages), judge.yml (chấm), tests-cache.yml (sinh test)
 static/                giao diện web (app.js, viz.js – mô phỏng, md.js, style.css)
 tests/validate.py      kiểm tra toàn bộ ngân hàng bài
 data/                  (tự tạo) cache test, lịch sử nộp bài submissions.jsonl

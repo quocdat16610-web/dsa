@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 data/
 judge/bin/
+site/
+work/
+out/
+comment.md

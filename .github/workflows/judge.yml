@@ -1,0 +1,68 @@
+# Chấm bài nộp từ trang GitHub Pages. Mỗi bài nộp là một issue có tiêu đề bắt đầu bằng "[DSA]".
+# Job `judge` chạy code của học sinh (dưới user hạn chế, không có token ghi);
+# job `reply` (có quyền ghi issue) chỉ đọc file kết quả và trả lời.
+name: Chấm bài
+on:
+  issues:
+    types: [opened]
+permissions: {}
+jobs:
+  judge:
+    if: startsWith(github.event.issue.title, '[DSA]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: parse
+        run: python3 tools/gh_judge.py parse
+      - name: Khôi phục bộ test đã sinh sẵn
+        if: steps.parse.outputs.valid == 'true' && steps.parse.outputs.topic != '00'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/tests
+          key: tests-${{ steps.parse.outputs.topic }}-${{ hashFiles('problems/base.py', 'problems/__init__.py', format('problems/t{0}_*.py', steps.parse.outputs.topic)) }}
+          restore-keys: tests-${{ steps.parse.outputs.topic }}-
+      - name: Chấm (bài nộp chạy bằng người dùng sandbox)
+        run: |
+          sudo useradd -M -s /usr/sbin/nologin dsasandbox
+          mkdir -p judge/bin && gcc -O2 -o judge/bin/runner judge/runner.c
+          chmod -R go-rwx "$GITHUB_WORKSPACE"
+          DSA_SANDBOX_USER=dsasandbox DSA_CACHE_GB=100 python3 tools/gh_judge.py judge
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result
+          path: out/result.json
+          retention-days: 1
+  reply:
+    needs: judge
+    if: always() && startsWith(github.event.issue.title, '[DSA]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: result
+          path: out
+      - id: c
+        run: python3 tools/gh_judge.py comment
+      - name: Trả lời issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number }}
+          LABEL: ${{ steps.c.outputs.label }}
+        run: |
+          gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --force >/dev/null 2>&1 || true
+          gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          gh issue edit "$NUM" --repo "$GITHUB_REPOSITORY" --add-label "$LABEL" || true
+          gh issue close "$NUM" --repo "$GITHUB_REPOSITORY" || true

@@ -1,0 +1,30 @@
+# Sinh sẵn bộ test cho từng chuyên đề và lưu vào cache để workflow "Chấm bài" dùng lại.
+# Chạy lại định kỳ để cache không bị GitHub xoá (cache không dùng sau 7 ngày sẽ bị xoá).
+name: Sinh bộ test
+on:
+  push:
+    paths: ["problems/**", ".github/workflows/tests-cache.yml"]
+  schedule:
+    - cron: "17 3 */5 * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.event_name == 'schedule' || github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        topic: ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+                "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"]
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: data/tests
+          key: tests-${{ matrix.topic }}-${{ hashFiles('problems/base.py', 'problems/__init__.py', format('problems/t{0}_*.py', matrix.topic)) }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: python3 tools/build_tests.py ${{ matrix.topic }}

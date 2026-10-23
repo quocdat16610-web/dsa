@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lớp Thuật Toán — Giáo án & Luyện tập</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c3aed'/><text x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='monospace'>{}</text></svg>">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="static/style.css">
 </head>
 <body>
 <header class="topbar">
@@ -18,14 +18,16 @@
     <a href="#/submissions" data-nav="submissions">Bài nộp</a>
   </nav>
   <div class="tools">
+    <button id="ghBtn" class="chip" title="Kết nối GitHub để nộp bài nhanh hơn" hidden>🔑 GitHub</button>
     <button id="userBtn" class="chip" title="Đổi tên người dùng">👤 <span id="userName">khách</span></button>
     <button id="themeBtn" class="icon-btn" title="Chế độ sáng / tối">☾</button>
   </div>
 </header>
 <main id="app" class="app"><div class="loading">Đang tải…</div></main>
-<footer class="foot">Chấm bài kiểu Codeforces · Dữ liệu và code chạy trên máy của bạn</footer>
-<script src="/static/md.js"></script>
-<script src="/static/viz.js"></script>
-<script src="/static/app.js"></script>
+<footer class="foot" id="foot">Chấm bài kiểu Codeforces · Dữ liệu và code chạy trên máy của bạn</footer>
+<script src="static/config.js"></script>
+<script src="static/md.js"></script>
+<script src="static/viz.js"></script>
+<script src="static/app.js"></script>
 </body>
 </html>

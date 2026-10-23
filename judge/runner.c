@@ -2,11 +2,13 @@
  * Runner nhỏ dùng để chạy bài nộp với giới hạn tài nguyên và đo chính xác thời gian CPU / bộ nhớ.
  * (Nếu fork trực tiếp từ server Python, bộ nhớ đo được bị cộng cả phần RSS của tiến trình Python.)
  *
- * Cách dùng: runner <cpu_ms> <mem_mb> <wall_ms> <stdin> <stdout> <stderr> <cmd> [args...]
+ * Cách dùng: runner [-u uid:gid] <cpu_ms> <mem_mb> <wall_ms> <stdin> <stdout> <stderr> <cmd> [args...]
+ *            -u: (khi chạy bằng root) đổi sang người dùng hạn chế trước khi chạy bài nộp.
  * In ra:     <exit_code> <signal> <cpu_ms> <maxrss_kb> <killed_by_wall>
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <grp.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -24,6 +26,11 @@ static long long now_ms(void) {
 }
 
 int main(int argc, char **argv) {
+    long run_uid = -1, run_gid = -1;
+    if (argc > 2 && argv[1][0] == '-' && argv[1][1] == 'u') {
+        if (sscanf(argv[2], "%ld:%ld", &run_uid, &run_gid) != 2) return 2;
+        argv += 2; argc -= 2;
+    }
     if (argc < 8) {
         fprintf(stderr, "usage: runner cpu_ms mem_mb wall_ms in out err cmd...\n");
         return 2;
@@ -43,6 +50,10 @@ int main(int argc, char **argv) {
         r.rlim_cur = r.rlim_max = (rlim_t)mem_mb << 20; setrlimit(RLIMIT_AS, &r); setrlimit(RLIMIT_STACK, &r);
         r.rlim_cur = r.rlim_max = 64 << 20; setrlimit(RLIMIT_FSIZE, &r);
         r.rlim_cur = r.rlim_max = 0; setrlimit(RLIMIT_CORE, &r);
+        if (run_uid >= 0) {
+            r.rlim_cur = r.rlim_max = 64; setrlimit(RLIMIT_NPROC, &r);
+            if (setgroups(0, NULL) != 0 || setgid((gid_t)run_gid) != 0 || setuid((uid_t)run_uid) != 0) _exit(125);
+        }
         execvp(argv[7], argv + 7);
         _exit(127);
     }

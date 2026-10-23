@@ -17,7 +17,110 @@
   let tried = new Set(store.get("tried." + user, []));
 
   // ------------------------------------------------------------ tiện ích
+  // ------------------------------------------------------------ chế độ GitHub Pages (tĩnh) — chấm bằng GitHub Actions
+  const CFG = window.DSA_CONFIG || { mode: "server" };
+  const STATIC = CFG.mode === "static";
+  const GH = "https://api.github.com/repos/" + CFG.repo;
+  let progressFn = null;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("Không tải được " + url);
+    return r.json();
+  }
+  function ghHeaders() {
+    const h = { Accept: "application/vnd.github+json" }, t = store.get("ghToken", "");
+    if (t) h.Authorization = "Bearer " + t;
+    return h;
+  }
+  async function ghFetch(url, opt = {}) {
+    const r = await fetch(url, { ...opt, headers: { ...ghHeaders(), ...(opt.headers || {}) } });
+    if (r.status === 403 || r.status === 429) throw new Error("GitHub đang giới hạn số lần truy cập (rate limit). Bấm 🔑 GitHub để nhập token, hoặc mở trang issue để xem kết quả.");
+    if (r.status === 401) throw new Error("Token GitHub không hợp lệ — bấm 🔑 GitHub để nhập lại.");
+    if (!r.ok) throw new Error("GitHub API lỗi " + r.status);
+    return r.json();
+  }
+  function decodeB64(b) { return new TextDecoder().decode(Uint8Array.from(atob(b), c => c.charCodeAt(0))); }
+  async function ghJudge(type, b) {
+    const tag = Math.random().toString(36).slice(2, 8);
+    const prob = b.pid ? META.problems.find(p => p.id === b.pid) : null;
+    const meta = { type, pid: b.pid || "", lang: b.lang, user, tag };
+    const title = `[DSA] ${type === "submit" ? "Nộp " + b.pid : "Chạy thử"} ${b.lang} #${tag}`;
+    const F = "````";
+    let body = `<!-- dsa ${JSON.stringify(meta)} -->\n` + (prob ? `**Bài:** ${prob.id} — ${prob.title}\n` : "") +
+      `**Người nộp:** ${user}\n\n### Code\n${F}${b.lang}\n${b.code.replace(/\s+$/, "")}\n${F}\n`;
+    if (type === "run") body += `\n### Input\n${F}\n${(b.input || "").replace(/\s+$/, "")}\n${F}\n`;
+    body += "\n_Tạo từ trang web Lớp Thuật Toán — GitHub Actions sẽ chấm và trả lời bên dưới._";
+    const say = msg => progressFn && progressFn(msg);
+    const token = store.get("ghToken", "");
+    let num = null;
+    if (token) {
+      say("Đang gửi bài lên GitHub…");
+      num = (await ghFetch(GH + "/issues", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title, body }) })).number;
+    } else {
+      const base = `https://github.com/${CFG.repo}/issues/new?title=${encodeURIComponent(title)}&body=`;
+      let url = base + encodeURIComponent(body), note = "";
+      if (url.length > 7500) {
+        await navigator.clipboard?.writeText(body).catch(() => {});
+        url = base + encodeURIComponent("XOÁ DÒNG NÀY rồi dán (Ctrl+V) nội dung đã được sao chép vào đây.");
+        note = " Code dài nên đã được <b>sao chép</b> — hãy xoá dòng mẫu và dán (Ctrl+V) vào ô nội dung.";
+      }
+      window.open(url, "_blank", "noopener");
+      say(`Đã mở GitHub ở tab mới — hãy bấm <b>Create</b> (Submit new issue) để nộp.${note} Cần đăng nhập GitHub.<br>
+        <span class="small">Mẹo: bấm 🔑 GitHub để lưu token, lần sau nộp bằng một cú bấm.</span>`);
+    }
+    const deadline = Date.now() + 10 * 60000, wait = token ? 5000 : 15000;
+    while (!num) {
+      if (Date.now() > deadline) throw new Error("Không tìm thấy issue nộp bài (bạn đã bấm Create chưa?).");
+      await sleep(wait);
+      const list = await ghFetch(GH + "/issues?state=all&sort=created&direction=desc&per_page=30");
+      const it = list.find(i => (i.title || "").endsWith("#" + tag));
+      if (it) num = it.number;
+    }
+    const link = `https://github.com/${CFG.repo}/issues/${num}`;
+    say(`Đã nhận bài (<a href="${link}" target="_blank" rel="noopener">issue #${num}</a>). Máy chủ GitHub Actions đang biên dịch và chấm… (thường 30–90 giây)`);
+    while (Date.now() < deadline) {
+      await sleep(wait);
+      const cs = await ghFetch(`${GH}/issues/${num}/comments?per_page=100`);
+      for (const c of cs) {
+        const m = (c.body || "").match(/<!-- dsa-result:([A-Za-z0-9+/=]+) -->/);
+        if (m && c.user && c.user.login === "github-actions[bot]") {
+          const res = JSON.parse(decodeB64(m[1]));
+          if (res.error && !res.verdict) throw new Error(res.error);
+          res.issue = link;
+          return res;
+        }
+      }
+    }
+    throw new Error("Quá thời gian chờ. Xem kết quả tại " + link);
+  }
+  async function staticApi(path, body) {
+    let m;
+    if (path === "/api/meta") return getJSON("api/meta.json");
+    if ((m = path.match(/^\/api\/topic\/(\d+)/))) return getJSON(`api/topic/${m[1]}.json`);
+    if ((m = path.match(/^\/api\/problem\/(\d+)/))) return getJSON(`api/problem/${m[1]}.json`);
+    if (path.startsWith("/api/submissions")) {
+      const q = new URLSearchParams(path.split("?")[1] || "");
+      let l = store.get("subs", []);
+      if (q.get("user")) l = l.filter(x => x.user === q.get("user"));
+      return l.slice(0, +(q.get("limit") || 100));
+    }
+    if (path === "/api/run") return ghJudge("run", body);
+    if (path === "/api/submit") {
+      const r = await ghJudge("submit", body);
+      const p = META.problems.find(x => x.id === body.pid);
+      const l = store.get("subs", []);
+      const d = new Date(), pad = n => String(n).padStart(2, "0");
+      l.unshift({ id: r.issue, time: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+        user, pid: body.pid, title: p ? p.title : "", lang: body.lang, verdict: r.verdict, ok: r.ok, ms: r.time || 0, kb: r.mem || 0, code: body.code, issue: r.issue });
+      store.set("subs", l.slice(0, 500));
+      return r;
+    }
+    throw new Error("Không hỗ trợ ở bản GitHub Pages: " + path);
+  }
+
   async function api(path, body) {
+    if (STATIC) return staticApi(path, body);
     const opt = body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {};
     const r = await fetch(path, opt);
     const j = await r.json().catch(() => ({ error: "Phản hồi không hợp lệ" }));
@@ -360,7 +463,7 @@
           <details style="margin-top:8px"><summary>Chạy với input tự nhập</summary>
             <div class="custom-io"><textarea id="cin" placeholder="Input…">${esc(p.samples[0]?.input || "")}</textarea><textarea id="cout" placeholder="Output…" readonly></textarea></div>
           </details>
-          ${p.ready ? "" : `<div class="small muted" id="prepNote" style="margin-top:6px">⏳ Bộ test đang được sinh lần đầu ở nền — lần nộp đầu tiên có thể chờ vài giây.</div>`}
+          ${STATIC ? `<div class="small muted" style="margin-top:6px">☁️ Bài được chấm trên máy chủ GitHub Actions (qua một issue của repo) — mất khoảng 30–90 giây.</div>` : p.ready ? "" : `<div class="small muted" id="prepNote" style="margin-top:6px">⏳ Bộ test đang được sinh lần đầu ở nền — lần nộp đầu tiên có thể chờ vài giây.</div>`}
           <div id="result"></div>
         </div>
       </section></div>`;
@@ -378,6 +481,7 @@
     $("#runBtn").onclick = async () => {
       const btn = $("#runBtn"); btn.disabled = true; $("#cout").value = "Đang chạy…";
       $("details").open = true;
+      progressFn = msg => { $("#cout").value = msg.replace(/<[^>]+>/g, ""); };
       try {
         const r = await api("/api/run", { lang, code: ta.value, input: $("#cin").value });
         $("#cout").value = r.verdict === "OK" ? r.output : `[${r.verdict}]\n${r.error || ""}`;
@@ -390,6 +494,7 @@
       const btn = $("#subBtn"); if (btn.disabled) return;
       btn.disabled = true; store.set(draftKey(lang), ta.value);
       $("#result").innerHTML = `<div class="verdict wait">Đang chấm…</div>`;
+      progressFn = msg => { $("#result").innerHTML = `<div class="verdict wait">⏳ ${msg}</div>`; };
       try {
         const r = await api("/api/submit", { pid, lang, code: ta.value, user });
         markSolved(pid, r.ok);
@@ -403,6 +508,7 @@
   function renderResult(r) {
     const ok = r.ok;
     let h = `<div class="verdict ${ok ? "ok" : "bad"}">${ok ? "✓ " : ""}${esc(r.verdict)}${r.time != null && r.tests?.length ? ` · ${r.time} ms · ${Math.round((r.mem || 0) / 1024)} MB` : ""}</div>`;
+    if (r.issue) h += `<div class="small muted">Chi tiết trên GitHub: <a href="${esc(r.issue)}" target="_blank" rel="noopener">${esc(r.issue.replace(/^https:\/\/github.com\//, ""))}</a></div>`;
     if (r.compile) h += `<div class="detail"><b>Thông báo biên dịch</b><pre>${esc(r.compile)}</pre></div>`;
     if (r.tests?.length) {
       h += `<table class="tests"><thead><tr><th>Test</th><th>Kết quả</th><th>Thời gian</th><th>Bộ nhớ</th></tr></thead><tbody>`;
@@ -513,13 +619,15 @@
     const all = store.get("subsAll", false);
     const list = await api("/api/submissions?limit=300" + (all ? "" : "&user=" + encodeURIComponent(user)));
     app.innerHTML = `<div class="row"><h1 class="grow">Bài nộp ${all ? "của cả lớp" : "của " + esc(user)}</h1>
-      <label class="small"><input type="checkbox" id="allU" ${all ? "checked" : ""}> Xem cả lớp (giáo viên)</label></div>
+      ${STATIC ? `<a class="btn" target="_blank" rel="noopener" href="https://github.com/${esc(CFG.repo)}/issues?q=is%3Aissue+in%3Atitle+%22%5BDSA%5D+N%E1%BB%99p%22">Bài nộp cả lớp trên GitHub</a>`
+        : `<label class="small"><input type="checkbox" id="allU" ${all ? "checked" : ""}> Xem cả lớp (giáo viên)</label>`}</div>
+      ${STATIC ? `<p class="small muted">Bản GitHub Pages lưu lịch sử nộp bài trên trình duyệt này; mỗi bài nộp cũng là một issue trên GitHub.</p>` : ""}
       <div class="panel" style="padding:6px 8px">${list.length ? `<table class="list"><thead><tr><th>Thời gian</th><th>Người nộp</th><th>Bài</th><th>Ngôn ngữ</th><th>Kết quả</th><th>Thời gian chạy</th><th></th></tr></thead><tbody>
       ${list.map((s, i) => `<tr><td class="small">${esc(s.time)}</td><td>${esc(s.user)}</td><td><a href="#/problem/${s.pid}">${s.pid} — ${esc(s.title)}</a></td>
       <td>${esc(META.langs[s.lang] || s.lang)}</td><td style="color:${s.ok ? "var(--ok)" : "var(--bad)"};font-weight:700">${esc(s.verdict)}</td>
       <td>${s.ms} ms</td><td><button class="btn" data-i="${i}">Xem code</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">Chưa có bài nộp nào.</div>`}</div>
       <div id="codeView"></div>`;
-    $("#allU").onchange = e => { store.set("subsAll", e.target.checked); subsPage(); };
+    if ($("#allU")) $("#allU").onchange = e => { store.set("subsAll", e.target.checked); subsPage(); };
     $$("[data-i]").forEach(b => b.onclick = () => {
       const s = list[+b.dataset.i];
       $("#codeView").innerHTML = `<div class="panel" style="margin-top:14px"><div class="row"><b class="grow">${esc(s.user)} · ${s.pid} · ${esc(s.verdict)}</b>
@@ -530,13 +638,26 @@
   }
 
   // ------------------------------------------------------------ khởi động
+  if (STATIC) {
+    $("#ghBtn").hidden = false;
+    $("#foot").textContent = "Chấm bài kiểu Codeforces trên máy chủ GitHub Actions · Trang chạy trên GitHub Pages";
+    $("#ghBtn").onclick = () => {
+      const cur = store.get("ghToken", "");
+      const t = prompt("Tuỳ chọn: dán GitHub token để nộp bài bằng một cú bấm (không cần mở tab GitHub) và tránh giới hạn truy cập.\n\n" +
+        "Tạo tại github.com/settings/personal-access-tokens → Fine-grained token → chỉ chọn repo " + CFG.repo +
+        " → quyền Issues: Read and write.\nToken chỉ lưu trên trình duyệt này. Để trống rồi bấm OK để xoá.", cur);
+      if (t !== null) { store.set("ghToken", t.trim()); $("#ghBtn").textContent = t.trim() ? "🔑 GitHub ✓" : "🔑 GitHub"; }
+    };
+    if (store.get("ghToken", "")) $("#ghBtn").textContent = "🔑 GitHub ✓";
+  }
+
   (async function init() {
     try {
       META = await api("/api/meta");
       await syncSolved();
       route();
     } catch (e) {
-      app.innerHTML = `<div class="panel">Không kết nối được máy chủ: ${esc(e.message)}.<br>Hãy chạy <code>python3 server.py</code> rồi mở lại trang.</div>`;
+      app.innerHTML = `<div class="panel">Không kết nối được máy chủ: ${esc(e.message)}.<br>${STATIC ? "Hãy tải lại trang." : "Hãy chạy <code>python3 server.py</code> rồi mở lại trang."}</div>`;
     }
   })();
 })();

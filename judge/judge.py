@@ -25,6 +25,22 @@ LANGS = {
            "compile": None, "run": ["python3", "-S", "main.py"], "tl_mult": 3.0},
 }
 
+# Chế độ sandbox (dùng trên GitHub Actions): biên dịch và chạy bài nộp bằng một người dùng hạn chế.
+# DSA_SANDBOX_USER=tên_user; tiến trình chấm cần quyền `sudo -n` (runner tự hạ quyền trước khi exec).
+SANDBOX_USER = os.environ.get("DSA_SANDBOX_USER")
+_CLEAN_ENV = ["env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "HOME=/tmp", "LANG=C.UTF-8"]
+
+
+def _sandbox_ids():
+    import pwd
+    pw = pwd.getpwnam(SANDBOX_USER)
+    return pw.pw_uid, pw.pw_gid
+
+
+def _as_sandbox(cmd):
+    return ["sudo", "-n", "-u", SANDBOX_USER, *_CLEAN_ENV, *cmd] if SANDBOX_USER else cmd
+
+
 MAX_PARALLEL = max(1, (os.cpu_count() or 2) - 1)
 _slots = threading.BoundedSemaphore(MAX_PARALLEL)
 
@@ -77,7 +93,12 @@ def runner_path():
 
 def _run_via_runner(runner, cmd, cwd, in_path, out_path, err_path, tl_ms, mem_mb):
     wall = int(tl_ms * 2.5 + 500)
-    p = subprocess.run([runner, str(tl_ms), str(mem_mb), str(wall), in_path, out_path, err_path, *cmd],
+    prefix = [runner]
+    if SANDBOX_USER:
+        uid, gid = _sandbox_ids()
+        prefix = ["sudo", "-n", runner, "-u", f"{uid}:{gid}"]
+        cmd = [*_CLEAN_ENV, *cmd]
+    p = subprocess.run([*prefix, str(tl_ms), str(mem_mb), str(wall), in_path, out_path, err_path, *cmd],
                        cwd=cwd, capture_output=True, text=True, timeout=wall / 1000 + 10)
     code, sig, cpu_ms, mem_kb, killed = map(int, p.stdout.split())
     return code, sig, cpu_ms, mem_kb, bool(killed)
@@ -88,6 +109,8 @@ def run_one(cmd, cwd, inp, tl_ms, ml_mb, extra_mem_mb=0):
     in_path = os.path.join(cwd, "input.txt")
     out_path = os.path.join(cwd, "output.txt")
     err_path = os.path.join(cwd, "stderr.txt")
+    if os.path.lexists(in_path):
+        os.unlink(in_path)
     with open(in_path, "w") as f:
         f.write(inp)
     runner = runner_path()
@@ -205,20 +228,25 @@ def judge(code, lang, tests, tl_ms=1000, ml_mb=256, stop_on_fail=True, checker="
         try:
             with open(os.path.join(wd, L["file"]), "w") as f:
                 f.write(code)
+            if SANDBOX_USER:
+                os.chmod(wd, 0o777)
+                os.chmod(os.path.join(wd, L["file"]), 0o644)
             if L["compile"]:
                 try:
-                    c = subprocess.run(L["compile"], cwd=wd, capture_output=True, text=True, timeout=60)
+                    c = subprocess.run(_as_sandbox(L["compile"]), cwd=wd, capture_output=True, text=True, timeout=60)
                 except subprocess.TimeoutExpired:
                     return {"verdict": "Compilation error", "ok": False, "compile": "Biên dịch quá lâu", "tests": []}
                 if c.returncode != 0:
                     return {"verdict": "Compilation error", "ok": False,
                             "compile": _clip(c.stderr, 4000), "tests": []}
             elif lang == "py":
-                c = subprocess.run(["python3", "-m", "py_compile", L["file"]], cwd=wd,
+                c = subprocess.run(_as_sandbox(["python3", "-m", "py_compile", L["file"]]), cwd=wd,
                                    capture_output=True, text=True, timeout=30)
                 if c.returncode != 0:
                     return {"verdict": "Compilation error", "ok": False,
                             "compile": _clip(c.stderr, 4000), "tests": []}
+            if SANDBOX_USER:  # từ giờ bài nộp không được ghi vào thư mục làm việc
+                os.chmod(wd, 0o755)
             results, max_t, max_m = [], 0, 0
             verdict = "Accepted"
             extra = 64 if lang == "py" else 0
@@ -244,6 +272,8 @@ def judge(code, lang, tests, tl_ms=1000, ml_mb=256, stop_on_fail=True, checker="
             return {"verdict": verdict, "ok": verdict == "Accepted", "time": max_t, "mem": max_m,
                     "tests": results, "total": len(tests)}
         finally:
+            if SANDBOX_USER:  # file do người dùng sandbox / root tạo
+                subprocess.run(["sudo", "-n", "rm", "-rf", wd], capture_output=True)
             shutil.rmtree(wd, ignore_errors=True)
 
 
